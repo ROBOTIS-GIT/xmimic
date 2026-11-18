@@ -63,6 +63,7 @@ class Config:
     log_every: int = 50  # iterations per log line (and per compiled program on one GPU)
     ckpt_every: int = 100
     seed: int = 0
+    model_dir: str = ""  # optional compiled scene export and robot metadata
     motion_dir: str = "data/lafan1_g1"
     log_dir: str = "runs/xmimic"
     max_minutes: float = 0.0  # stop after this much training time (0: run all iterations)

@@ -79,13 +79,13 @@ class XMimic:
         build the trainer without it and run the probe sweeps elsewhere."""
         self.cfg = c = cfg
         nets.MM_OUT = jnp.bfloat16  # torch-autocast matmul outputs (see nets.MM_OUT)
-        self.mj_model, self.meta = load_model()
+        self.mj_model, self.meta = load_model(c.model_dir)
         assert c.njmax > 0, "--njmax must be positive (BlinkMimic: 500)"
         self.meta["sim"]["njmax"] = c.njmax
         meta = self.meta
         self.J = J = len(meta["joint_names"])
         self.kin = Kinematics(meta)
-        feet = [meta["tracked_bodies"].index(b) for b in ("left_ankle_roll_link", "right_ankle_roll_link")]
+        feet = [meta["tracked_bodies"].index(b) for b in meta.get("contact_bodies", ("left_ankle_roll_link", "right_ankle_roll_link"))]
         self.sim = Sim(self.mj_model, meta, c.num_envs, None, gamma=c.gamma, fail_reset=c.fail_reset)
         self.layout = self.sim.layout
         self.mdp = MDP(self.kin, meta["default_joint_pos"], feet, self.layout.dim)

@@ -41,6 +41,11 @@ def load_ckpt(path):
     return params, bufs, meta
 
 
+def checkpoint_config(path):
+    with np.load(path, allow_pickle=False) as checkpoint:
+        return json.loads(checkpoint["meta"].item())["args"]
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("run_dir")
@@ -49,13 +54,26 @@ def main(argv=None):
     ap.add_argument("--chunk", type=int, default=500, help="control steps per compiled program")
     ap.add_argument("--motion_dir", default=None, help="default: the run's own")
     ap.add_argument("--group", type=int, default=0, help="checkpoints per batch (0: all at once)")
+    ap.add_argument("--expected_robot", type=json.loads, default=None)
     args = ap.parse_args(argv)
+    if min(args.reps, args.every, args.chunk) < 1 or args.group < 0:
+        ap.error("reps, every, and chunk must be positive; group must be nonnegative")
     files = sorted(glob.glob(os.path.join(args.run_dir, "ckpt_*.npz")))[:: args.every]
-    assert files, args.run_dir
-    cfg = json.loads(str(np.load(files[0])["meta"]))["args"]
-    mj, meta = load_model()
+    if not files:
+        ap.error(f"No checkpoints in {args.run_dir}")
+    cfg = checkpoint_config(files[0])
+    if args.expected_robot is not None and cfg.get("robot") != args.expected_robot:
+        ap.error("Checkpoint robot differs from the selected task")
+    keys = ("robot", "model_dir", "motion_dir", "hist", "goal_frames", "enc_hidden", "dec_hidden")
+    for checkpoint in files[1:]:
+        other = checkpoint_config(checkpoint)
+        if any(cfg.get(key) != other.get(key) for key in keys):
+            ap.error(f"Checkpoint differs from the selected run: {checkpoint}")
+    mj, meta = load_model(cfg.get("model_dir"))
+    if cfg.get("robot") != meta.get("robot"):
+        ap.error("Checkpoint robot differs from the evaluation scene")
     kin = Kinematics(meta)
-    feet = [meta["tracked_bodies"].index(b) for b in ("left_ankle_roll_link", "right_ankle_roll_link")]
+    feet = [meta["tracked_bodies"].index(b) for b in meta.get("contact_bodies", ("left_ankle_roll_link", "right_ankle_roll_link"))]
     motion = load_motion(args.motion_dir or cfg["motion_dir"], kin, feet)
     C = len(motion.names)
     K, Hh = cfg["goal_frames"], cfg["hist"]

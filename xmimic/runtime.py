@@ -82,7 +82,8 @@ class RunLog:
             "it_per_s", "lr", "pi_lr", "nonfinite"]  # fmt: skip
 
     def __init__(self, xm, cfg, t0, avg_template, args_meta, extra_cols=()):
-        self.cfg, self.t0, self.args_meta = cfg, t0, args_meta
+        self.cfg, self.t0 = cfg, t0
+        self.args_meta = {**args_meta, "robot": xm.meta.get("robot")}
         self.cols = self.COLS + list(extra_cols)
         self.f = open(os.path.join(cfg.log_dir, "train_log.csv"), "a")
         self.f.write(",".join(self.cols) + "\n")

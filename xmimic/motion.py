@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import dataclasses
 import glob
+import hashlib
+import json
+from pathlib import Path
 import os
 from functools import partial
 
@@ -142,10 +145,25 @@ class Motion:
 
 def load_motion(motion_dir: str, kin, feet: list[int], margin: float = 0.015, vmax: float = 0.5, quant: float = 0.05) -> Motion:
     """All *.csv clips of ``motion_dir`` in sorted order (blinkmimic.motion.MotionLib.from_dir plus set_ref_contact(feet))."""
+    manifest = Path(motion_dir) / "manifest.json"
+    if manifest.is_file():
+        rows = json.loads(manifest.read_text())["clips"]
+        clips = []
+        fields = ("root_pos_w", "root_quat_w", "root_lin_vel_w", "root_ang_vel_w", "joint_pos", "joint_vel")
+        for row in rows:
+            path = manifest.parent / row["derived"]
+            with path.open("rb") as stream:
+                if hashlib.file_digest(stream, "sha256").hexdigest() != row["derived_sha256"]:
+                    raise ValueError(f"Reference hash mismatch: {path}")
+                stream.seek(0)
+                with np.load(stream, allow_pickle=False) as data:
+                    p, quat, v, w, q, qd = (data[field] for field in fields)
+            clips.append((p, _quat_to_mat_np(quat), v, w, q, qd))
+        return assemble_motion(tuple(row["song"] for row in rows), clips, kin, feet, margin, vmax, quant)
     files = sorted(glob.glob(os.path.join(motion_dir, "*.csv")))
     assert files, f"no clips in {motion_dir}: run tools/download_data.sh first"
     names = tuple(os.path.splitext(os.path.basename(f))[0] for f in files)
-    ps, Rs, vs, ws, js, jds, lens = [], [], [], [], [], [], []
+    ps, Rs, vs, ws, js, jds = [], [], [], [], [], []
     for f in files:
         p, quat, j, fps = load_lafan1_csv(f)
         p, quat, j = (x.astype(np.float32) for x in (p, quat, j))
@@ -164,8 +182,14 @@ def load_motion(motion_dir: str, kin, feet: list[int], margin: float = 0.015, vm
         w[0] = _so3_log_np(R[1] @ R[0].T) / np.float32(CONTROL_DT)
         w[-1] = _so3_log_np(R[-1] @ R[-2].T) / np.float32(CONTROL_DT)
         ps.append(p), Rs.append(R), vs.append(_gradient(p, CONTROL_DT)), ws.append(w), js.append(j), jds.append(_gradient(j, CONTROL_DT))
-        lens.append(n)
-    lens = np.asarray(lens)
+    clips = zip(ps, Rs, vs, ws, js, jds, strict=True)
+    return assemble_motion(names, clips, kin, feet, margin, vmax, quant)
+
+
+def assemble_motion(names, clips, kin, feet, margin, vmax, quant):
+    """Build device arrays and per-clip reset/contact features from native states."""
+    ps, Rs, vs, ws, js, jds = zip(*clips, strict=True)
+    lens = np.asarray([len(p) for p in ps])
     clip_start = np.concatenate(([0], np.cumsum(lens[:-1]))).astype(np.int32)
     clip_end = (clip_start + lens - 1).astype(np.int32)
     clip_id = np.concatenate([np.full(n, i, np.int32) for i, n in enumerate(lens)])

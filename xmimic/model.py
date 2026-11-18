@@ -24,7 +24,8 @@ def load_meta(path: Path = ASSETS) -> dict:
 
 def load_model(path: Path = ASSETS) -> tuple[mujoco.MjModel, dict]:
     """(MjModel with BlinkMimic's solver options and exact parameter values, metadata)."""
-    if not (path / "assets" / "meshes").is_dir():
+    path = Path(path) if path else ASSETS
+    if path == ASSETS and not (path / "assets" / "meshes").is_dir():
         raise FileNotFoundError(f"G1 meshes not found in {path / 'assets' / 'meshes'}: run tools/download_data.sh first")
     meta = load_meta(path)
     m = mujoco.MjModel.from_xml_path(str(path / "scene.xml"))
@@ -39,6 +40,12 @@ def load_model(path: Path = ASSETS) -> tuple[mujoco.MjModel, dict]:
     m.opt.ls_tolerance = s["ls_tolerance"]
     m.opt.ccd_iterations = s["ccd_iterations"]
     m.opt.impratio = s["impratio"]
+    for field in ("jacobian", "disableflags", "enableflags", "gravity"):
+        if field in s:
+            if field == "gravity":
+                m.opt.gravity[:] = s[field]
+            else:
+                setattr(m.opt, field, s[field])
     for field, value in meta["exact"].items():
         getattr(m, field)[:] = np.asarray(value, dtype=np.float64).reshape(getattr(m, field).shape)
     return m, meta
